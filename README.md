@@ -19,7 +19,7 @@ Nötige Software, um das Projekt lokal auszuführen:
 Step-by-step:
 1. Projekt downloaden oder klonen:
    ```bash
-   git clone https://github.com/Larzeax/retoure-to-lable.git
+   git clone https://github.com/Larzeax/retoure-to-label.git
 
 2. In das Projektverzeichnis wechseln:
    ```bash
