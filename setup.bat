@@ -8,7 +8,7 @@ set "batchFile=run_pdf_processor.bat"
 set "regFile=setup_context_menu.reg"
 set "venvPath=%currentPath%\venv"
 set "sendToPath=%APPDATA%\Microsoft\Windows\SendTo"
-set "shortcutName=!Run PDF Processor.lnk"
+set "shortcutName=!!Label Creator.lnk"
 
 
 REM Replace backslashes with double backslashes for .reg file
@@ -57,21 +57,21 @@ REM Create the .reg file for the context menu
     echo.
 
     REM First registry key and value
-    echo [HKEY_LOCAL_MACHINE\SOFTWARE\Classes\SystemFileAssociations\.pdf\shell\ProcessPDF]
-    echo @="Process PDF"
+    echo [HKEY_LOCAL_MACHINE\SOFTWARE\Classes\SystemFileAssociations\.pdf\shell\ProcessLabel]
+    echo @="Process Label"
 
     REM Second registry key and value
-    echo [HKEY_LOCAL_MACHINE\SOFTWARE\Classes\Directory\shell\ProcessPDF]
-    echo @="Process PDF"
+    echo [HKEY_LOCAL_MACHINE\SOFTWARE\Classes\Directory\shell\ProcessLabels]
+    echo @="Process Labels"
 
 
 
     REM Second registry key and value
-    echo [HKEY_LOCAL_MACHINE\SOFTWARE\Classes\SystemFileAssociations\.pdf\shell\ProcessPDF\command]
+    echo [HKEY_LOCAL_MACHINE\SOFTWARE\Classes\SystemFileAssociations\.pdf\shell\ProcessLabel\command]
     echo @="\"%escapedPath%\\run_pdf_processor.bat\" \"%%1\""
 
     REM Second registry key and value
-    echo [HKEY_LOCAL_MACHINE\SOFTWARE\Classes\Directory\shell\ProcessPDF\command]
+    echo [HKEY_LOCAL_MACHINE\SOFTWARE\Classes\Directory\shell\ProcessLabels\command]
     echo @="\"%escapedPath%\\run_pdf_processor.bat\" \"%%1\""
 
 ) > "%regFile%"
