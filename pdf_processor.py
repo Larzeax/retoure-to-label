@@ -38,10 +38,11 @@ def check_Retoure(filename):
 def extract_and_rotate_images(filename, outPath):
     doc = fitz.open(filename)
     pdf_writer = PyPDF2.PdfWriter()
-
+    img_count = 0
     for page_num in range(len(doc)):
         page = doc[page_num]
         image_list = page.get_images(full=True)
+        img_count += len(image_list)
         for img_index, img in enumerate(image_list):
             image = Image.open(io.BytesIO(doc.extract_image(img[0])["image"]))
             rotated_image = image.rotate(270, expand=True)
@@ -57,7 +58,7 @@ def extract_and_rotate_images(filename, outPath):
         pdf_writer.write(output_file)
 
     doc.close()
-    return output_pdf_path
+    return img_count
 
 
 def split_and_rotate(filename, outPath):
@@ -93,13 +94,13 @@ def crop_pdf_to_format(path, target_format):
     crop_height = mm_to_points(105)  # 105 mm in points
     crop_width = mm_to_points(208) # 208 mm in points
 
-    width, height = map(float, target_format.lower().replace("mm", "").split('x'))
-    if 'mm' in target_format.lower():
-        target_width = mm_to_points(width)
-        target_height = mm_to_points(height)
-    else:
-        target_width = inches_to_points(width)
-        target_height = inches_to_points(height)
+    # width, height = map(float, target_format.lower().replace("mm", "").split('x'))
+    # if 'mm' in target_format.lower():
+    #     target_width = mm_to_points(width)
+    #     target_height = mm_to_points(height)
+    # else:
+    #     target_width = inches_to_points(width)
+    #     target_height = inches_to_points(height)
 
     reader = PyPDF2.PdfReader(path)
     writer = PyPDF2.PdfWriter()
@@ -133,10 +134,35 @@ def crop_pdf_to_format(path, target_format):
     return path
 
 
-def send_webhook(pathToMerged):
+def send_webhook(pathToMerged, name):
     with open(pathToMerged, "rb") as file:
-        files = {'file': ('path', file)}
+        files = {'file': (name, file)}
         requests.post(discordWebhook, files=files)
+
+
+def check_dpd(file, outPath):
+    pdf_text = PyPDF2.PdfReader(file).pages[0].extract_text()
+    if "dpd" in pdf_text.lower():
+        print("DPD label detected.")
+        return True
+    else:
+        return False
+
+
+def handle_dpd(file, outPath):
+    pdf = PyPDF2.PdfReader(file)
+    writer = PyPDF2.PdfWriter()
+
+    filepath = os.path.join(outPath, os.path.basename(file).split('.')[0] + "_edited.pdf")
+    for page in pdf.pages:
+        width = page.mediabox.width
+        height = page.mediabox.height
+        page.mediabox.lower_left = (0, height / 2)
+        page.mediabox.upper_right = (width / 2, height)
+        writer.add_page(page)
+    with open(filepath, "wb") as output_pdf:
+        writer.write(output_pdf)
+    return len(pdf.pages)
 
 
 def main(paths):
@@ -168,17 +194,23 @@ def main(paths):
 
     if not os.path.exists(outPath) and len(files) > 0:
         os.mkdir(outPath)
+    lable_count = 0
+    carrier = "c"
     for file in files:
-        if check_Retoure(file):
+        if check_dpd(file, outPath):
+            carrier += "_DPD"
+            lable_count += handle_dpd(file, outPath)
+        elif check_Retoure(file):
             extract_and_rotate_images(file, outPath)
+            carrier += "_Retoure"
         else:
             out_pdf_path = split_and_rotate(file, outPath)
-            # if not check_private(file):
             crop_pdf_to_format(out_pdf_path, "105x208mm")
+            carrier += "_DHL"
     merged_path = concatenate(outPath)
 
     if discordWebhook:
-        send_webhook(merged_path)
+        send_webhook(merged_path, name=f"{carrier}_{lable_count}_labels.pdf")
     if openFiles:
         os.startfile(merged_path)
 
