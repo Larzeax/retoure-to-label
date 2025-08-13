@@ -8,7 +8,6 @@ import requests
 from readConfig import discordWebhook, openFiles
 import fitz  # PyMuPDF
 from PIL import Image
-use4x6Format = True
 
 def check_private(file_buffer):
     file = PyPDF2.PdfReader(file_buffer)
