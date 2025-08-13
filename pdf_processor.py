@@ -1,108 +1,103 @@
 import io
 import os
 import datetime
-import glob
-import shutil
 import sys
 import PyPDF2
 import pdfrw
 import requests
 from readConfig import discordWebhook, openFiles
-import fitz # PyMuPDF
+import fitz  # PyMuPDF
 from PIL import Image
+use4x6Format = True
 
-
-def check_private(filename):
-    file = PyPDF2.PdfReader(filename)
-    numPages = len(file.pages)
+def check_private(file_buffer):
+    file = PyPDF2.PdfReader(file_buffer)
     searchItems = ["Warenkorb-Nr", "Privat"]
-    for i in range(0, numPages):
-        page = file.pages[i]
+    for page in file.pages:
         text = page.extract_text()
         if any(item in text for item in searchItems):
             return True
     return False
 
-def check_Retoure(filename):
-    file = PyPDF2.PdfReader(filename)
-    numPages = len(file.pages)
+
+def check_retoure(file_buffer):
+    file = PyPDF2.PdfReader(file_buffer)
     searchItems = ["Rücksendeetikett", "Rücksendezentrum", "Returns Centre"]
-    for i in range(0, numPages):
-        page = file.pages[i]
+    for page in file.pages:
         text = page.extract_text()
         if any(item in text for item in searchItems):
             return True
     return False
 
 
-def extract_and_rotate_images(filename, outPath):
-    doc = fitz.open(filename)
+def extract_and_rotate_images(file_buffer):
+    doc = fitz.open(stream=file_buffer.read(), filetype="pdf")
     pdf_writer = PyPDF2.PdfWriter()
-    img_count = 0
+
     for page_num in range(len(doc)):
         page = doc[page_num]
         image_list = page.get_images(full=True)
-        img_count += len(image_list)
+
         for img_index, img in enumerate(image_list):
             image = Image.open(io.BytesIO(doc.extract_image(img[0])["image"]))
             rotated_image = image.rotate(270, expand=True)
+
             img_byte_arr = io.BytesIO()
             rotated_image.save(img_byte_arr, format='PDF')
-            img_byte_arr = img_byte_arr.getvalue()
+            img_byte_arr.seek(0)
 
-            pdf_image = PyPDF2.PdfReader(io.BytesIO(img_byte_arr))
+            pdf_image = PyPDF2.PdfReader(img_byte_arr)
             pdf_writer.add_page(pdf_image.pages[0])
 
-    output_pdf_path = os.path.join(outPath, os.path.basename(filename).split('.')[0] + "_edited.pdf")
-    with open(output_pdf_path, "wb") as output_file:
-        pdf_writer.write(output_file)
-
     doc.close()
-    return img_count
+
+    output_buffer = io.BytesIO()
+    pdf_writer.write(output_buffer)
+    output_buffer.seek(0)
+    return output_buffer
 
 
-def split_and_rotate(filename, outPath):
+def split_and_rotate(file_buffer):
+    file_buffer.seek(0)
     writer = pdfrw.PdfWriter()
-    filepath = os.path.join(outPath, os.path.basename(filename).split('.')[0] + "_edited.pdf")
-    for page in pdfrw.PdfReader(filename).pages:
+    reader = pdfrw.PdfReader(fdata=file_buffer.read())
+
+    for page in reader.pages:
         newpage = pdfrw.PageMerge()
         newpage.add(page, viewrect=(0, 0, 1, 0.5))
         page = newpage.render()
         page.Rotate = 90
         writer.addpage(page)
-    writer.write(filepath)
-    return filepath
 
-def concatenate(outpath):
+    output_buffer = io.BytesIO()
+    writer.write(output_buffer)
+    output_buffer.seek(0)
+    return output_buffer
+
+
+def concatenate_buffers(pdf_buffers):
     writer = pdfrw.PdfWriter()
-    for file in glob.glob(os.path.join(outpath, "*.pdf")):
-        reader = pdfrw.PdfReader(file)
+
+    for buffer in pdf_buffers:
+        buffer.seek(0)
+        reader = pdfrw.PdfReader(fdata=buffer.read())
         writer.addpages(reader.pages)
-    merged_path = os.path.join(outpath, "merged.pdf")
-    writer.write(merged_path)
-    return merged_path
+
+    merged_buffer = io.BytesIO()
+    writer.write(merged_buffer)
+    merged_buffer.seek(0)
+    return merged_buffer
 
 
-def crop_pdf_to_format(path, target_format):
-
+def crop_pdf_to_format(pdf_buffer):
     def mm_to_points(mm):
         return mm * 2.83465
 
-    def inches_to_points(inches):
-        return inches * 72
+    crop_height = mm_to_points(90)
+    crop_width = mm_to_points(195)
 
-    crop_height = mm_to_points(105)  # 105 mm in points
-    crop_width = mm_to_points(208) # 208 mm in points
-
-    # width, height = map(float, target_format.lower().replace("mm", "").split('x'))
-    # if 'mm' in target_format.lower():
-    #     target_width = mm_to_points(width)
-    #     target_height = mm_to_points(height)
-    # else:
-    #     target_width = inches_to_points(width)
-    #     target_height = inches_to_points(height)
-
-    reader = PyPDF2.PdfReader(path)
+    pdf_buffer.seek(0)
+    reader = PyPDF2.PdfReader(pdf_buffer)
     writer = PyPDF2.PdfWriter()
 
     for page in reader.pages:
@@ -112,107 +107,106 @@ def crop_pdf_to_format(path, target_format):
         current_width = current_right - current_left
         current_height = current_top - current_bottom
 
-        crop1_left = max(0, (current_width - crop_width) / 2)
-        crop1_bottom = max(0, (current_height - crop_height) / 2)
-        crop1_right = max(0, (current_width - crop_width) / 2)
-        crop1_top = max(0, (current_height - crop_height) / 2)
+        additional_crop = mm_to_points(21)
+        crop_left = max(0, (current_width - crop_width) / 2)
+        crop_bottom = max(0, (current_height - crop_height) / 2)
+        crop_right = max(0, (current_width - crop_width) / 2) + additional_crop
+        crop_top = max(0, (current_height - crop_height) / 2)
 
-        new_left1 = current_left + crop1_left
-        new_bottom1 = current_bottom + crop1_bottom
-        new_right1 = current_right - crop1_right
-        new_top1 = current_top - crop1_top
+        new_left = current_left + crop_left
+        new_bottom = current_bottom + crop_bottom
+        new_right = current_right - crop_right
+        new_top = current_top - crop_top
 
-        page.mediabox.lower_left = (new_left1, new_bottom1)
-        page.mediabox.upper_right = (new_right1, new_top1)
-
-        # page.scale_to(target_height, target_width)
+        page.mediabox.lower_left = (new_left, new_bottom)
+        page.mediabox.upper_right = (new_right, new_top)
         writer.add_page(page)
 
-    with open(path, "wb") as output_file:
-        writer.write(output_file)
-
-    return path
-
-
-def send_webhook(pathToMerged, name):
-    with open(pathToMerged, "rb") as file:
-        files = {'file': (name, file)}
-        requests.post(discordWebhook, files=files)
+    output_buffer = io.BytesIO()
+    writer.write(output_buffer)
+    output_buffer.seek(0)
+    return output_buffer
 
 
-def check_dpd(file, outPath):
-    pdf_text = PyPDF2.PdfReader(file).pages[0].extract_text()
-    if "dpd" in pdf_text.lower():
-        print("DPD label detected.")
-        return True
-    else:
-        return False
+def send_webhook(pdf_buffer, name):
+    pdf_buffer.seek(0)
+    files = {'file': (name, pdf_buffer)}
+    requests.post(discordWebhook, files=files)
 
 
-def handle_dpd(file, outPath):
-    pdf = PyPDF2.PdfReader(file)
+def check_dpd(file_buffer):
+    file_buffer.seek(0)
+    pdf_text = PyPDF2.PdfReader(file_buffer).pages[0].extract_text()
+    return "dpd" in pdf_text.lower()
+
+
+def handle_dpd(file_buffer):
+    file_buffer.seek(0)
+    pdf = PyPDF2.PdfReader(file_buffer)
     writer = PyPDF2.PdfWriter()
 
-    filepath = os.path.join(outPath, os.path.basename(file).split('.')[0] + "_edited.pdf")
     for page in pdf.pages:
         width = page.mediabox.width
         height = page.mediabox.height
         page.mediabox.lower_left = (0, height / 2)
         page.mediabox.upper_right = (width / 2, height)
         writer.add_page(page)
-    with open(filepath, "wb") as output_pdf:
-        writer.write(output_pdf)
-    return len(pdf.pages)
+
+    output_buffer = io.BytesIO()
+    writer.write(output_buffer)
+    output_buffer.seek(0)
+    return output_buffer, len(pdf.pages)
 
 
 def main(paths):
-    if not os.path.exists("./RetourenLabels"):
-        os.mkdir("./RetourenLabels")
-    if not os.path.exists("./EditedLabels"):
-        os.mkdir("./EditedLabels")
+    processed_buffers = []
+    label_count = 0
+    carrier = "c"
+
+    # Sammle alle PDF-Dateien
     files = []
-
-    outPath = "./EditedLabels/" + datetime.datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
-
     if len(paths) > 1:
         print("Multiple files selected.")
-        for file_path in paths:
-            if file_path.lower().endswith('.pdf'):
-                shutil.copy(file_path, "./RetourenLabels")
-                files.append(file_path)
-            else:
-                print(f"Skipping file: {file_path} (not a PDF file)")
+        files = [path for path in paths if path.lower().endswith('.pdf')]
     elif os.path.isdir(paths[0]):
-        for file in os.listdir(paths[0]):
-            if file.lower().endswith('.pdf'):
-                shutil.copy(os.path.join(paths[0], file), "./RetourenLabels")
-                files.append(os.path.join(paths[0], file))
-            else:
-                print(f"Skipping file: {file} (not a PDF file)")
+        dir_path = paths[0]
+        files = [os.path.join(dir_path, f) for f in os.listdir(dir_path)
+                 if f.lower().endswith('.pdf')]
     else:
-        files.append(paths[0])
+        files = [paths[0]]
 
-    if not os.path.exists(outPath) and len(files) > 0:
-        os.mkdir(outPath)
-    lable_count = 0
-    carrier = "c"
-    for file in files:
-        if check_dpd(file, outPath):
+    # Verarbeite jede Datei
+    for file_path in files:
+        with open(file_path, 'rb') as f:
+            file_buffer = io.BytesIO(f.read())
+
+        if check_dpd(file_buffer):
             carrier += "_DPD"
-            lable_count += handle_dpd(file, outPath)
-        elif check_Retoure(file):
-            extract_and_rotate_images(file, outPath)
+            processed_buffer, count = handle_dpd(file_buffer)
+            label_count += count
+            processed_buffers.append(processed_buffer)
+        elif check_retoure(file_buffer):
+            processed_buffer = extract_and_rotate_images(file_buffer)
             carrier += "_Retoure"
+            processed_buffers.append(processed_buffer)
         else:
-            out_pdf_path = split_and_rotate(file, outPath)
-            crop_pdf_to_format(out_pdf_path, "105x208mm")
+            split_buffer = split_and_rotate(file_buffer)
+            cropped_buffer = crop_pdf_to_format(split_buffer)
             carrier += "_DHL"
-    merged_path = concatenate(outPath)
+            processed_buffers.append(cropped_buffer)
 
-    if discordWebhook:
-        send_webhook(merged_path, name=f"{carrier}_{lable_count}_labels.pdf")
-    if openFiles:
-        os.startfile(merged_path)
+    if processed_buffers:
+        merged_buffer = concatenate_buffers(processed_buffers)
+
+        if discordWebhook:
+            send_webhook(merged_buffer, name=f"{carrier}_{label_count}_labels.pdf")
+
+        if openFiles:
+            temp_path = f"temp_merged_{datetime.datetime.now().strftime('%H%M%S')}.pdf"
+            with open(temp_path, 'wb') as temp_file:
+                merged_buffer.seek(0)
+                temp_file.write(merged_buffer.read())
+            os.startfile(temp_path)
 
 
 if __name__ == "__main__":
